@@ -22,11 +22,14 @@ class _HomeScreenState extends State<HomeScreen> {
   Barcode? result;
   QRViewController? controller;
   String busNumber = ''; // Mã xe buýt
-  int busId = 9; // ID xe buýt mặc định
+  int busId = 281; // ID xe buýt mặc định
   String driverName = ''; // Tên tài xế
   Timer? positionTimer;
   bool showSuccess = false;
   bool showError = false;
+  bool isProcessing = false;
+  StreamSubscription? scanSubscription;
+  Timer? refreshTimer;
 
   @override
   void initState() {
@@ -77,23 +80,35 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     controller?.dispose();
     positionTimer?.cancel();
+    scanSubscription?.cancel();
+    refreshTimer?.cancel();
     super.dispose();
   }
 
   void _onQRViewCreated(QRViewController controller) {
     this.controller = controller;
-    controller.scannedDataStream.listen((scanData) async {
-      setState(() {
-        result = scanData;
-      });
-      if (result != null) {
-        await _checkTicket(result!.code);
+    scanSubscription = controller.scannedDataStream.listen((scanData) async {
+      if (!isProcessing) {
+        setState(() {
+          result = scanData;
+          isProcessing = true; // Bắt đầu xử lý
+        });
+        if (result != null) {
+          String? ticketData = result!.code;
+          try {
+            Map<String, dynamic> decodedTicketData = jsonDecode(ticketData!);
+            int ticketId = decodedTicketData['ticket_id'];
+            await _checkTicket(ticketId);
+          } catch (e) {
+            print('Error decoding JSON: $e');
+          }
+        }
       }
     });
   }
 
-  Future<void> _checkTicket(String? ticketCode) async {
-    if (ticketCode == null) return;
+  Future<void> _checkTicket(int ticket_id) async {
+    if (ticket_id == null) return;
     final String baseUrl = dotenv.env['BASE_URL'] ?? 'https://defaultapi.com/';
 
     final response = await http.post(
@@ -102,8 +117,9 @@ class _HomeScreenState extends State<HomeScreen> {
         'Content-Type': 'application/json; charset=UTF-8',
       },
       body: jsonEncode(<String, dynamic>{
-        'ticket_id': int.parse(ticketCode),
+        'ticket_id': ticket_id,
         'bus_number': busNumber,
+        "bus_id": busId
       }),
     );
 
@@ -112,8 +128,6 @@ class _HomeScreenState extends State<HomeScreen> {
         showSuccess = true;
         showError = false;
       });
-      await _getOnBus(ticketCode);
-      _startLocationUpdates();
     } else {
       setState(() {
         showError = true;
@@ -126,6 +140,7 @@ class _HomeScreenState extends State<HomeScreen> {
         showSuccess = false;
         showError = false;
         result = null;
+        isProcessing = false; // Kết thúc xử lý
       });
       controller?.resumeCamera();
     });
@@ -192,20 +207,21 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _getOffBus(int stationId) async {
     final String baseUrl = dotenv.env['BASE_URL'] ?? 'https://defaultapi.com/';
 
-    final response = await http.post(
-      Uri.parse('$baseUrl/get_off_bus'),
-      headers: <String, String>{
-        'Content-Type': 'application/json; charset=UTF-8',
-      },
-      body: jsonEncode(<String, dynamic>{
-        'bus_station_id': stationId,
-        'bus_id': busId,
-      }),
-    );
+    // final response = await http.post(
+    //   Uri.parse('$baseUrl/get_off_bus'),
+    //   headers: <String, String>{
+    //     'Content-Type': 'application/json; charset=UTF-8',
+    //   },
+    //   body: jsonEncode(<String, dynamic>{
+    //     'bus_station_id': stationId,
+    //     'bus_id': busId,
+    //   }),
+    // );
 
-    if (response.statusCode != 200) {
-      // Handle error
-    }
+    // if (response.statusCode != 200) {
+    //   // Handle error
+    // }
+    print('den diem cuoi');
   }
 
   Future<void> _fetchBusInformation() async {
@@ -288,9 +304,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 Column(
                   children: [
-                    Icon(FontAwesomeIcons.user, size: 50, color: Colors.blue),
+                    Icon(FontAwesomeIcons.car, size: 50, color: Colors.blue),
                     SizedBox(height: 5),
-                    Text('Biển số: $driverName',
+                    Text('$driverName',
                         style: TextStyle(
                             fontSize: 16, fontWeight: FontWeight.bold)),
                   ],
@@ -310,7 +326,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 borderWidth: 10,
                 cutOutSize: 300,
               ),
-              cameraFacing: CameraFacing.front,
             ),
           ),
           Expanded(
